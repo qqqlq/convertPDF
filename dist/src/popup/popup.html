@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <title>Slide PDF Converter</title>
-  <script type="module" crossorigin src="/assets/popup.html-xsfrX9pk.js"></script>
+  <script type="module" crossorigin src="/assets/popup.html-C1LMEn20.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/modulepreload-polyfill-B5Qt9EMX.js">
-  <link rel="stylesheet" crossorigin href="/assets/popup-Bz0WsDLu.css">
+  <link rel="stylesheet" crossorigin href="/assets/popup-Dc26NKrg.css">
 </head>
 <body>
   <h1>Slide PDF Converter</h1>
@@ -14,14 +14,23 @@
   <div class="count">キャプチャ枚数: <span id="count">0</span></div>
 
   <label class="slider-label">
-    検知感度（閾値）: <span id="threshold-val">0.15</span>
-    <input type="range" id="threshold" min="0.05" max="0.5" step="0.01" value="0.15" />
+    キャプチャ間隔: <span id="interval-val">30</span> 秒
+    <input type="range" id="interval" min="5" max="120" step="5" value="30" />
   </label>
 
   <div class="buttons">
     <button id="btn-toggle">録画開始</button>
     <button id="btn-pdf" disabled>PDF生成</button>
   </div>
+
+  <details class="advanced">
+    <summary>詳細設定</summary>
+    <label class="adv-label">
+      重複判定（ハミング距離）: <span id="hamming-val">8</span> / 64
+      <input type="range" id="hamming" min="0" max="64" step="1" value="8" />
+      <small>小さいほど厳しく（重複を消しにくい）、大きいほど緩く（積極的に間引く）</small>
+    </label>
+  </details>
 
 </body>
 </html>
