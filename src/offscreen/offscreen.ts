@@ -1,9 +1,72 @@
 import { PDFDocument } from "pdf-lib";
-import type { Message, UseTabCaptureMessage, OffscreenReadyMessage } from "../shared/types.js";
+import type {
+  Message,
+  UseTabCaptureMessage,
+  GeneratePDFFromDBMessage,
+  SaveFrameMessage,
+} from "../shared/types.js";
 import { CAPTURE_MAX_WIDTH } from "../shared/constants.js";
 import { computeDHash, dedupFrames, type HashedFrame } from "./dhash.js";
 
-// --- tabCapture fallback ---
+// ============================================================
+// IndexedDB
+// ============================================================
+
+const DB_NAME = "slidepdf";
+const STORE_NAME = "frames";
+
+let db: IDBDatabase | null = null;
+
+function openDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = (e) => {
+      const database = (e.target as IDBOpenDBRequest).result;
+      if (!database.objectStoreNames.contains(STORE_NAME)) {
+        database.createObjectStore(STORE_NAME, { autoIncrement: true });
+      }
+    };
+    req.onsuccess = (e) => resolve((e.target as IDBOpenDBRequest).result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function getDB(): Promise<IDBDatabase> {
+  if (!db) db = await openDB();
+  return db;
+}
+
+function idbSaveFrame(database: IDBDatabase, pngBytes: Uint8Array): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction(STORE_NAME, "readwrite");
+    const req = tx.objectStore(STORE_NAME).add(pngBytes.buffer);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function idbGetAllFrames(database: IDBDatabase): Promise<Uint8Array[]> {
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction(STORE_NAME, "readonly");
+    const req = tx.objectStore(STORE_NAME).getAll();
+    req.onsuccess = () =>
+      resolve((req.result as ArrayBuffer[]).map((b) => new Uint8Array(b)));
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function idbClearFrames(database: IDBDatabase): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const tx = database.transaction(STORE_NAME, "readwrite");
+    const req = tx.objectStore(STORE_NAME).clear();
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+// ============================================================
+// tabCapture fallback
+// ============================================================
 
 let tabCaptureStream: MediaStream | null = null;
 let tabCaptureInterval: ReturnType<typeof setInterval> | null = null;
@@ -27,41 +90,42 @@ async function startTabCapture(tabId: number, intervalMs: number) {
     const scale = rawW > CAPTURE_MAX_WIDTH ? CAPTURE_MAX_WIDTH / rawW : 1;
     const w = Math.round(rawW * scale);
     const h = Math.round(rawH * scale);
-
     const offCanvas = new OffscreenCanvas(w, h);
-    const ctx = offCanvas.getContext("2d")!;
-    ctx.drawImage(video, 0, 0, w, h);
+    offCanvas.getContext("2d")!.drawImage(video, 0, 0, w, h);
     const blob = await offCanvas.convertToBlob({ type: "image/png" });
     const buf = await blob.arrayBuffer();
+    const pngBytes = new Uint8Array(buf);
+    // IndexedDB に直接保存し、service worker には枚数カウント用のみ通知
+    const database = await getDB();
+    await idbSaveFrame(database, pngBytes);
     chrome.runtime.sendMessage({
       type: "FRAME_CAPTURED",
-      pngData: Array.from(new Uint8Array(buf)),
+      pngData: [],  // データ本体は DB に保存済み。SW はカウントのみ更新
     } satisfies Message);
   }
 
-  // 開始直後に1枚、以後は intervalMs ごとに定期キャプチャ
   captureFrame();
   tabCaptureInterval = setInterval(captureFrame, intervalMs);
 }
 
-// --- PDF generation with dedup ---
+// ============================================================
+// PDF generation with dedup
+// ============================================================
 
-async function buildPDF(rawFrames: number[][], hammingThreshold: number): Promise<void> {
+async function buildPDF(hammingThreshold: number): Promise<void> {
+  const database = await getDB();
+  const rawFrames = await idbGetAllFrames(database);
   console.log(`[SlidePDF] buildPDF start: rawFrames=${rawFrames.length}`);
 
-  // 1. 各フレームの dHash を計算
   const hashed: HashedFrame[] = [];
-  for (const arr of rawFrames) {
-    const pngBytes = new Uint8Array(arr);
+  for (const pngBytes of rawFrames) {
     const hash = await computeDHash(pngBytes);
     hashed.push({ pngBytes, hash });
   }
 
-  // 2. 重複削除
   const kept = dedupFrames(hashed, hammingThreshold);
-  console.log(`[SlidePDF] dedup done: ${rawFrames.length} → ${kept.length} frames (threshold=${hammingThreshold})`);
+  console.log(`[SlidePDF] dedup: ${rawFrames.length} → ${kept.length} (threshold=${hammingThreshold})`);
 
-  // 3. PDF 生成
   const pdfDoc = await PDFDocument.create();
   for (const f of kept) {
     const img = await pdfDoc.embedPng(f.pngBytes);
@@ -82,21 +146,36 @@ async function buildPDF(rawFrames: number[][], hammingThreshold: number): Promis
   } satisfies Message);
 }
 
-// --- message listener ---
+// ============================================================
+// message listener
+// ============================================================
 
 chrome.runtime.onMessage.addListener((msg: Message) => {
-  if (msg.type === "USE_TAB_CAPTURE") {
-    const m = msg as UseTabCaptureMessage;
-    startTabCapture(m.tabId!, m.intervalMs).catch(console.error);
-  } else if (msg.type === "OFFSCREEN_READY") {
-    const m = msg as OffscreenReadyMessage;
-    buildPDF(m.frames, m.hammingThreshold).catch(console.error);
-  } else if (msg.type === "STOP_CAPTURE") {
-    if (tabCaptureInterval !== null) {
-      clearInterval(tabCaptureInterval);
-      tabCaptureInterval = null;
+  switch (msg.type) {
+    case "SAVE_FRAME":
+      getDB().then((database) => {
+        const pngBytes = new Uint8Array((msg as SaveFrameMessage).pngData);
+        idbSaveFrame(database, pngBytes).catch(console.error);
+      });
+      break;
+    case "CLEAR_FRAMES":
+      getDB().then((database) => idbClearFrames(database)).catch(console.error);
+      break;
+    case "GENERATE_PDF_FROM_DB":
+      buildPDF((msg as GeneratePDFFromDBMessage).hammingThreshold).catch(console.error);
+      break;
+    case "USE_TAB_CAPTURE": {
+      const m = msg as UseTabCaptureMessage;
+      startTabCapture(m.tabId!, m.intervalMs).catch(console.error);
+      break;
     }
-    tabCaptureStream?.getTracks().forEach((t) => t.stop());
-    tabCaptureStream = null;
+    case "STOP_CAPTURE":
+      if (tabCaptureInterval !== null) {
+        clearInterval(tabCaptureInterval);
+        tabCaptureInterval = null;
+      }
+      tabCaptureStream?.getTracks().forEach((t) => t.stop());
+      tabCaptureStream = null;
+      break;
   }
 });

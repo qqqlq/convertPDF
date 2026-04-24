@@ -1,108 +1,69 @@
 import type {
   Message,
-  FrameCapturedMessage,
   StatusUpdateMessage,
   StartCaptureMessage,
   UseTabCaptureMessage,
   GeneratePDFMessage,
+  FrameCapturedMessage,
 } from "../shared/types.js";
 import { CAPTURE_INTERVAL_DEFAULT_MS, HAMMING_THRESHOLD_DEFAULT } from "../shared/constants.js";
 
-// --- 状態 ---
-let frames: number[][] = [];
+// --- 軽量メタデータのみ保持（フレームデータは IndexedDB に委譲）---
+let frameCount = 0;
 let isCapturing = false;
 let activeTabId: number | null = null;
 let captureIntervalMs = CAPTURE_INTERVAL_DEFAULT_MS;
 
-// --- chrome.storage.session のキー ---
+// --- session storage（メタデータのみ、数十バイト）---
 const SESSION_KEY = "captureState";
 
 interface CaptureState {
   isCapturing: boolean;
   activeTabId: number | null;
   captureIntervalMs: number;
-  frames: string[]; // base64 エンコードした PNG バイト列
-}
-
-function pngToBase64(arr: number[]): string {
-  return btoa(String.fromCharCode(...arr));
-}
-
-function base64ToPng(b64: string): number[] {
-  return Array.from(atob(b64), (c) => c.charCodeAt(0));
+  frameCount: number;
 }
 
 async function saveState() {
-  const state: CaptureState = {
-    isCapturing,
-    activeTabId,
-    captureIntervalMs,
-    frames: frames.map(pngToBase64),
-  };
-  try {
-    await chrome.storage.session.set({ [SESSION_KEY]: state });
-  } catch {
-    // 10MB 上限超過などは無視（フレームが失われても録画は継続）
-  }
+  const state: CaptureState = { isCapturing, activeTabId, captureIntervalMs, frameCount };
+  await chrome.storage.session.set({ [SESSION_KEY]: state }).catch(() => {});
 }
 
 async function loadState() {
   try {
     const result = await chrome.storage.session.get(SESSION_KEY);
-    const state = result[SESSION_KEY] as CaptureState | undefined;
-    if (!state) return;
-    isCapturing = state.isCapturing;
-    activeTabId = state.activeTabId;
-    captureIntervalMs = state.captureIntervalMs;
-    frames = state.frames.map(base64ToPng);
-  } catch {
-    // 読み込み失敗は無視
-  }
+    const s = result[SESSION_KEY] as CaptureState | undefined;
+    if (!s) return;
+    isCapturing = s.isCapturing;
+    activeTabId = s.activeTabId;
+    captureIntervalMs = s.captureIntervalMs;
+    frameCount = s.frameCount;
+  } catch { /* ignore */ }
 }
 
-async function clearState() {
-  frames = [];
-  isCapturing = false;
-  activeTabId = null;
-  await chrome.storage.session.remove(SESSION_KEY);
-}
-
-// --- サービスワーカー生存維持 ---
-// alarms で 20 秒ごとに起こし続けることで 30 秒無操作による強制終了を防ぐ
-
+// --- alarms: SW を 20 秒ごとに起こして強制終了を防ぐ ---
 function startKeepalive() {
-  chrome.alarms.create("keepAlive", { periodInMinutes: 1 / 3 }); // 約 20 秒
+  chrome.alarms.create("keepAlive", { periodInMinutes: 1 / 3 });
 }
-
 function stopKeepalive() {
   chrome.alarms.clear("keepAlive");
 }
-
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "keepAlive") {
-    // no-op: アラームを受け取るだけでサービスワーカーが再起動される
-  }
-});
+chrome.alarms.onAlarm.addListener(() => { /* no-op */ });
 
 // --- offscreen ---
-
 async function ensureOffscreen() {
   const existing = await chrome.offscreen.hasDocument();
   if (!existing) {
     await chrome.offscreen.createDocument({
       url: "src/offscreen/offscreen.html",
       reasons: [chrome.offscreen.Reason.BLOBS],
-      justification: "PDF generation and tabCapture relay",
+      justification: "PDF generation, IndexedDB storage, tabCapture relay",
     });
   }
 }
 
 function broadcastStatus() {
-  const status: StatusUpdateMessage = {
-    type: "STATUS_UPDATE",
-    frameCount: frames.length,
-    isCapturing,
-  };
+  const status: StatusUpdateMessage = { type: "STATUS_UPDATE", frameCount, isCapturing };
   chrome.runtime.sendMessage(status).catch(() => {});
 }
 
@@ -111,14 +72,16 @@ async function startCapture(tabId: number, intervalMs: number) {
   isCapturing = true;
   activeTabId = tabId;
   captureIntervalMs = intervalMs;
-  frames = [];
+  frameCount = 0;
   startKeepalive();
+
+  // offscreen の IndexedDB をクリア
+  await ensureOffscreen();
+  chrome.runtime.sendMessage({ type: "CLEAR_FRAMES" } satisfies Message).catch(() => {});
+
   await saveState();
   broadcastStatus();
-  chrome.tabs.sendMessage(tabId, {
-    type: "START_CAPTURE",
-    intervalMs,
-  } satisfies Message);
+  chrome.tabs.sendMessage(tabId, { type: "START_CAPTURE", intervalMs } satisfies Message);
 }
 
 async function stopCapture() {
@@ -137,8 +100,7 @@ async function stopCapture() {
 async function generatePDF(hammingThreshold: number) {
   await ensureOffscreen();
   chrome.runtime.sendMessage({
-    type: "OFFSCREEN_READY",
-    frames,
+    type: "GENERATE_PDF_FROM_DB",
     hammingThreshold,
   } satisfies Message);
 }
@@ -146,7 +108,6 @@ async function generatePDF(hammingThreshold: number) {
 // --- 起動時に前回状態を復元 ---
 loadState().then(() => {
   if (isCapturing) {
-    // サービスワーカーが再起動した場合、録画状態を復元してアラームを再登録
     startKeepalive();
     broadcastStatus();
   }
@@ -164,11 +125,18 @@ chrome.runtime.onMessage.addListener((msg: Message) => {
     case "STOP_CAPTURE":
       stopCapture();
       break;
-    case "FRAME_CAPTURED":
-      frames.push((msg as FrameCapturedMessage).pngData);
-      saveState(); // 非同期で逐次保存（await しない）
+    case "FRAME_CAPTURED": {
+      // content script からのフレームを offscreen の IndexedDB に転送
+      const m = msg as FrameCapturedMessage;
+      ensureOffscreen().then(() => {
+        chrome.runtime.sendMessage({ type: "SAVE_FRAME", pngData: m.pngData } satisfies Message)
+          .catch(() => {});
+      });
+      frameCount++;
+      saveState();
       broadcastStatus();
       break;
+    }
     case "GENERATE_PDF": {
       const m = msg as GeneratePDFMessage;
       generatePDF(m.hammingThreshold ?? HAMMING_THRESHOLD_DEFAULT);

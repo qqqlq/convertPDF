@@ -2,11 +2,13 @@ export type MessageType =
   | "START_CAPTURE"
   | "STOP_CAPTURE"
   | "FRAME_CAPTURED"
+  | "SAVE_FRAME"
+  | "CLEAR_FRAMES"
   | "GENERATE_PDF"
+  | "GENERATE_PDF_FROM_DB"
   | "PDF_READY"
   | "STATUS_UPDATE"
-  | "USE_TAB_CAPTURE"
-  | "OFFSCREEN_READY";
+  | "USE_TAB_CAPTURE";
 
 export interface BaseMessage {
   type: MessageType;
@@ -28,9 +30,23 @@ export interface FrameCapturedMessage extends BaseMessage {
   pngData: number[];
 }
 
+export interface SaveFrameMessage extends BaseMessage {
+  type: "SAVE_FRAME";
+  pngData: number[];
+}
+
+export interface ClearFramesMessage extends BaseMessage {
+  type: "CLEAR_FRAMES";
+}
+
 export interface GeneratePDFMessage extends BaseMessage {
   type: "GENERATE_PDF";
   hammingThreshold?: number;
+}
+
+export interface GeneratePDFFromDBMessage extends BaseMessage {
+  type: "GENERATE_PDF_FROM_DB";
+  hammingThreshold: number;
 }
 
 export interface PDFReadyMessage extends BaseMessage {
@@ -52,18 +68,14 @@ export interface UseTabCaptureMessage extends BaseMessage {
   intervalMs: number;
 }
 
-export interface OffscreenReadyMessage extends BaseMessage {
-  type: "OFFSCREEN_READY";
-  frames: number[][];
-  hammingThreshold: number;
-}
-
 export type Message =
   | StartCaptureMessage
   | StopCaptureMessage
   | FrameCapturedMessage
+  | SaveFrameMessage
+  | ClearFramesMessage
   | GeneratePDFMessage
+  | GeneratePDFFromDBMessage
   | PDFReadyMessage
   | StatusUpdateMessage
-  | UseTabCaptureMessage
-  | OffscreenReadyMessage;
+  | UseTabCaptureMessage;
