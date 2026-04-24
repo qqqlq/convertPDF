@@ -1,11 +1,13 @@
-import type { Message, StatusUpdateMessage } from "../shared/types.js";
+import type { Message, StatusUpdateMessage, PDFReadyMessage } from "../shared/types.js";
 
 const btnToggle = document.getElementById("btn-toggle") as HTMLButtonElement;
 const btnPdf = document.getElementById("btn-pdf") as HTMLButtonElement;
 const statusEl = document.getElementById("status")!;
 const countEl = document.getElementById("count")!;
-const thresholdInput = document.getElementById("threshold") as HTMLInputElement;
-const thresholdVal = document.getElementById("threshold-val")!;
+const intervalInput = document.getElementById("interval") as HTMLInputElement;
+const intervalVal = document.getElementById("interval-val")!;
+const hammingInput = document.getElementById("hamming") as HTMLInputElement;
+const hammingVal = document.getElementById("hamming-val")!;
 
 let isCapturing = false;
 
@@ -18,8 +20,12 @@ function updateUI(capturing: boolean, count: number) {
   btnPdf.disabled = capturing || count === 0;
 }
 
-thresholdInput.addEventListener("input", () => {
-  thresholdVal.textContent = thresholdInput.value;
+intervalInput.addEventListener("input", () => {
+  intervalVal.textContent = intervalInput.value;
+});
+
+hammingInput.addEventListener("input", () => {
+  hammingVal.textContent = hammingInput.value;
 });
 
 btnToggle.addEventListener("click", async () => {
@@ -27,11 +33,10 @@ btnToggle.addEventListener("click", async () => {
   if (!tab?.id) return;
 
   if (!isCapturing) {
-    const threshold = parseFloat(thresholdInput.value);
-    // service worker 経由で送ることで tabId を service worker が把握できる
+    const intervalMs = parseInt(intervalInput.value) * 1000;
     chrome.runtime.sendMessage({
       type: "START_CAPTURE",
-      threshold,
+      intervalMs,
       tabId: tab.id,
     } satisfies Message);
     updateUI(true, parseInt(countEl.textContent ?? "0"));
@@ -42,7 +47,11 @@ btnToggle.addEventListener("click", async () => {
 });
 
 btnPdf.addEventListener("click", () => {
-  chrome.runtime.sendMessage({ type: "GENERATE_PDF" } satisfies Message);
+  const hammingThreshold = parseInt(hammingInput.value);
+  chrome.runtime.sendMessage({
+    type: "GENERATE_PDF",
+    hammingThreshold,
+  } satisfies Message);
   btnPdf.disabled = true;
   statusEl.textContent = "PDF生成中...";
 });
@@ -52,11 +61,15 @@ chrome.runtime.onMessage.addListener((msg: Message) => {
     const m = msg as StatusUpdateMessage;
     updateUI(m.isCapturing, m.frameCount);
   } else if (msg.type === "PDF_READY") {
+    const m = msg as PDFReadyMessage;
     chrome.downloads.download({
-      url: msg.dataUrl,
+      url: m.dataUrl,
       filename: "slides.pdf",
     });
-    statusEl.textContent = "PDF保存完了";
+    const info = m.originalCount != null
+      ? `PDF保存完了（${m.originalCount}枚 → ${m.keptCount}枚）`
+      : "PDF保存完了";
+    statusEl.textContent = info;
   }
 });
 
