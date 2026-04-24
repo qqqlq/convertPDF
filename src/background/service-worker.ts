@@ -4,12 +4,14 @@ import type {
   StatusUpdateMessage,
   StartCaptureMessage,
   UseTabCaptureMessage,
+  GeneratePDFMessage,
 } from "../shared/types.js";
+import { CAPTURE_INTERVAL_DEFAULT_MS, HAMMING_THRESHOLD_DEFAULT } from "../shared/constants.js";
 
 const frames: number[][] = [];
 let isCapturing = false;
 let activeTabId: number | null = null;
-let captureThreshold = 0.15;
+let captureIntervalMs = CAPTURE_INTERVAL_DEFAULT_MS;
 
 async function ensureOffscreen() {
   const existing = await chrome.offscreen.hasDocument();
@@ -31,16 +33,16 @@ function broadcastStatus() {
   chrome.runtime.sendMessage(status).catch(() => {});
 }
 
-function startCapture(tabId: number, threshold: number) {
+function startCapture(tabId: number, intervalMs: number) {
   if (isCapturing) return;
   isCapturing = true;
   activeTabId = tabId;
-  captureThreshold = threshold;
+  captureIntervalMs = intervalMs;
   frames.length = 0;
   broadcastStatus();
   chrome.tabs.sendMessage(tabId, {
     type: "START_CAPTURE",
-    threshold,
+    intervalMs,
   } satisfies Message);
 }
 
@@ -49,18 +51,18 @@ function stopCapture() {
   isCapturing = false;
   if (activeTabId !== null) {
     chrome.tabs.sendMessage(activeTabId, { type: "STOP_CAPTURE" } satisfies Message).catch(() => {});
-    // offscreen にも停止を通知
     chrome.runtime.sendMessage({ type: "STOP_CAPTURE" } satisfies Message).catch(() => {});
     activeTabId = null;
   }
   broadcastStatus();
 }
 
-async function generatePDF() {
+async function generatePDF(hammingThreshold: number) {
   await ensureOffscreen();
   chrome.runtime.sendMessage({
     type: "OFFSCREEN_READY",
     frames,
+    hammingThreshold,
   } satisfies Message);
 }
 
@@ -68,9 +70,8 @@ chrome.runtime.onMessage.addListener((msg: Message) => {
   switch (msg.type) {
     case "START_CAPTURE": {
       const m = msg as StartCaptureMessage;
-      const tabId = m.tabId;
-      if (tabId == null) return;
-      startCapture(tabId, m.threshold);
+      if (m.tabId == null) return;
+      startCapture(m.tabId, m.intervalMs);
       break;
     }
     case "STOP_CAPTURE":
@@ -80,16 +81,18 @@ chrome.runtime.onMessage.addListener((msg: Message) => {
       frames.push((msg as FrameCapturedMessage).pngData);
       broadcastStatus();
       break;
-    case "GENERATE_PDF":
-      generatePDF();
+    case "GENERATE_PDF": {
+      const m = msg as GeneratePDFMessage;
+      generatePDF(m.hammingThreshold ?? HAMMING_THRESHOLD_DEFAULT);
       break;
+    }
     case "USE_TAB_CAPTURE": {
       if (activeTabId === null) return;
       ensureOffscreen().then(() => {
         const payload: UseTabCaptureMessage = {
           type: "USE_TAB_CAPTURE",
           tabId: activeTabId!,
-          threshold: (msg as UseTabCaptureMessage).threshold,
+          intervalMs: (msg as UseTabCaptureMessage).intervalMs,
         };
         chrome.runtime.sendMessage(payload).catch(() => {});
       });
