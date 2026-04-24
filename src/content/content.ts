@@ -60,7 +60,17 @@ function stop() {
   }
 }
 
+async function manualCapture() {
+  const video = findVideo();
+  if (!video || video.readyState < 2) return;
+  const pngData = await capturePNG(video);
+  if (pngData) {
+    chrome.runtime.sendMessage({ type: "FRAME_CAPTURED", pngData } satisfies Message);
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg: Message) => {
   if (msg.type === "START_CAPTURE") start(msg as StartCaptureMessage);
   else if (msg.type === "STOP_CAPTURE") stop();
+  else if (msg.type === "MANUAL_CAPTURE") manualCapture();
 });

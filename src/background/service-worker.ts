@@ -154,6 +154,11 @@ chrome.runtime.onMessage.addListener((msg: Message) => {
       });
       break;
     }
+    case "MANUAL_CAPTURE":
+      if (activeTabId !== null) {
+        chrome.tabs.sendMessage(activeTabId, { type: "MANUAL_CAPTURE" } satisfies Message);
+      }
+      break;
     case "STATUS_UPDATE":
       broadcastStatus();
       break;

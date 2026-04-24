@@ -1,6 +1,7 @@
 import type { Message, StatusUpdateMessage, PDFReadyMessage } from "../shared/types.js";
 
 const btnToggle = document.getElementById("btn-toggle") as HTMLButtonElement;
+const btnManual = document.getElementById("btn-manual") as HTMLButtonElement;
 const btnPdf = document.getElementById("btn-pdf") as HTMLButtonElement;
 const statusEl = document.getElementById("status")!;
 const countEl = document.getElementById("count")!;
@@ -17,6 +18,7 @@ function updateUI(capturing: boolean, count: number) {
   btnToggle.textContent = capturing ? "録画停止" : "録画開始";
   statusEl.textContent = capturing ? "録画中..." : "待機中";
   statusEl.classList.toggle("capturing", capturing);
+  btnManual.disabled = !capturing;
   btnPdf.disabled = capturing || count === 0;
 }
 
@@ -44,6 +46,10 @@ btnToggle.addEventListener("click", async () => {
     chrome.runtime.sendMessage({ type: "STOP_CAPTURE" } satisfies Message);
     updateUI(false, parseInt(countEl.textContent ?? "0"));
   }
+});
+
+btnManual.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "MANUAL_CAPTURE" } satisfies Message);
 });
 
 btnPdf.addEventListener("click", () => {

@@ -2,6 +2,7 @@ export type MessageType =
   | "START_CAPTURE"
   | "STOP_CAPTURE"
   | "FRAME_CAPTURED"
+  | "MANUAL_CAPTURE"
   | "SAVE_FRAME"
   | "CLEAR_FRAMES"
   | "GENERATE_PDF"
@@ -33,6 +34,10 @@ export interface FrameCapturedMessage extends BaseMessage {
 export interface SaveFrameMessage extends BaseMessage {
   type: "SAVE_FRAME";
   pngData: number[];
+}
+
+export interface ManualCaptureMessage extends BaseMessage {
+  type: "MANUAL_CAPTURE";
 }
 
 export interface ClearFramesMessage extends BaseMessage {
@@ -72,6 +77,7 @@ export type Message =
   | StartCaptureMessage
   | StopCaptureMessage
   | FrameCapturedMessage
+  | ManualCaptureMessage
   | SaveFrameMessage
   | ClearFramesMessage
   | GeneratePDFMessage

@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>画像差分分析ツール</title>
+<style>
+  body { font-family: sans-serif; max-width: 900px; margin: 20px auto; padding: 0 16px; }
+  h1 { font-size: 18px; }
+  .drop-area {
+    border: 2px dashed #aaa; border-radius: 8px; padding: 24px;
+    text-align: center; color: #666; cursor: pointer; margin-bottom: 12px;
+  }
+  .drop-area.over { border-color: #07f; background: #f0f8ff; }
+  .images { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .images img { max-height: 160px; border: 1px solid #ddd; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }
+  th, td { border: 1px solid #ddd; padding: 6px 10px; text-align: right; }
+  th { background: #f5f5f5; text-align: center; }
+  td:first-child { text-align: left; }
+  .good { color: green; font-weight: bold; }
+  .warn { color: orange; font-weight: bold; }
+  .bad  { color: red; font-weight: bold; }
+  #diff-canvas { border: 1px solid #ddd; max-width: 100%; }
+  .section { margin-bottom: 24px; }
+  button { padding: 8px 16px; font-size: 14px; cursor: pointer; }
+  .note { background: #fffbe6; border: 1px solid #ffe58f; padding: 8px 12px; border-radius: 4px; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>画像差分分析ツール（閾値選定用）</h1>
+<p class="note">
+  2枚の画像を選択（またはドロップ）してください。<br>
+  「スライドのアニメーション前」と「アニメーション後」の画像を比較するのに使います。
+</p>
+
+<div class="section">
+  <div class="drop-area" id="drop1">
+    <strong>画像 A</strong>（アニメーション前・変化前）<br>
+    クリックまたはドロップ
+    <input type="file" accept="image/*" style="display:none" id="file1">
+  </div>
+  <div class="drop-area" id="drop2">
+    <strong>画像 B</strong>（アニメーション後・変化後）<br>
+    クリックまたはドロップ
+    <input type="file" accept="image/*" style="display:none" id="file2">
+  </div>
+  <div class="images" id="preview"></div>
+  <button id="analyze-btn" disabled>分析する</button>
+</div>
+
+<div class="section" id="results" style="display:none">
+  <h2>分析結果</h2>
+
+  <table id="metrics-table">
+    <thead>
+      <tr>
+        <th>指標</th><th>値</th><th>判定</th><th>説明</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <h3>推奨閾値</h3>
+  <div id="recommendation" style="font-size:14px; line-height:1.8;"></div>
+
+  <h3>差分ヒートマップ（明るいほど変化が大きい）</h3>
+  <canvas id="diff-canvas"></canvas>
+</div>
+
+<script>
+const imageData = [null, null];
+let loadedCount = 0;
+
+function setupDrop(dropId, fileId, index) {
+  const drop = document.getElementById(dropId);
+  const file = document.getElementById(fileId);
+  drop.addEventListener('click', () => file.click());
+  file.addEventListener('change', (e) => loadImage(e.target.files[0], index, drop));
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault(); drop.classList.remove('over');
+    loadImage(e.dataTransfer.files[0], index, drop);
+  });
+}
+
+function loadImage(file, index, drop) {
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    imageData[index] = img;
+    drop.textContent = `✅ ${file.name} (${img.width}×${img.height})`;
+    updatePreview();
+    loadedCount++;
+    if (imageData[0] && imageData[1]) {
+      document.getElementById('analyze-btn').disabled = false;
+    }
+  };
+  img.src = url;
+}
+
+function updatePreview() {
+  const preview = document.getElementById('preview');
+  preview.innerHTML = '';
+  imageData.forEach((img, i) => {
+    if (!img) return;
+    const el = img.cloneNode();
+    el.title = ['画像A', '画像B'][i];
+    preview.appendChild(el);
+  });
+}
+
+function getPixels(img) {
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width; canvas.height = img.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  return ctx.getImageData(0, 0, img.width, img.height);
+}
+
+function analyze() {
+  const imgA = imageData[0], imgB = imageData[1];
+  if (!imgA || !imgB) return;
+
+  // 同じサイズにリサイズ（小さい方に合わせる）
+  const w = Math.min(imgA.width, imgB.width);
+  const h = Math.min(imgA.height, imgB.height);
+
+  const canvasA = document.createElement('canvas');
+  canvasA.width = w; canvasA.height = h;
+  canvasA.getContext('2d').drawImage(imgA, 0, 0, w, h);
+  const dA = canvasA.getContext('2d').getImageData(0, 0, w, h).data;
+
+  const canvasB = document.createElement('canvas');
+  canvasB.width = w; canvasB.height = h;
+  canvasB.getContext('2d').drawImage(imgB, 0, 0, w, h);
+  const dB = canvasB.getContext('2d').getImageData(0, 0, w, h).data;
+
+  const total = w * h;
+  let sumDiff = 0;
+  let count10 = 0, count30 = 0, count60 = 0, count100 = 0;
+  const diffMap = new Uint8ClampedArray(total * 4);
+  const hist = new Array(256).fill(0);
+
+  for (let i = 0; i < total; i++) {
+    const p = i * 4;
+    const dr = Math.abs(dA[p]   - dB[p]);
+    const dg = Math.abs(dA[p+1] - dB[p+1]);
+    const db = Math.abs(dA[p+2] - dB[p+2]);
+    const maxD = Math.max(dr, dg, db);
+    const avgD = (dr + dg + db) / 3;
+    sumDiff += (dr + dg + db);
+    if (maxD > 10)  count10++;
+    if (maxD > 30)  count30++;
+    if (maxD > 60)  count60++;
+    if (maxD > 100) count100++;
+    hist[Math.min(255, Math.round(avgD))]++;
+    // ヒートマップ
+    const bright = Math.min(255, avgD * 3);
+    diffMap[p] = bright; diffMap[p+1] = bright * 0.3; diffMap[p+2] = 0; diffMap[p+3] = 255;
+  }
+
+  const avgDiff = sumDiff / (total * 3 * 255);
+  const pct10  = count10  / total * 100;
+  const pct30  = count30  / total * 100;
+  const pct60  = count60  / total * 100;
+  const pct100 = count100 / total * 100;
+
+  // パーセンタイル計算
+  let p90val = 0, p99val = 0, cum = 0;
+  for (let v = 0; v < 256; v++) {
+    cum += hist[v];
+    if (p90val === 0 && cum / total >= 0.90) p90val = v;
+    if (p99val === 0 && cum / total >= 0.99) p99val = v;
+  }
+
+  // 結果表示
+  document.getElementById('results').style.display = '';
+  const tbody = document.querySelector('#metrics-table tbody');
+  tbody.innerHTML = '';
+
+  const rows = [
+    ['平均ピクセル差分スコア（現行アルゴリズム）', (avgDiff * 100).toFixed(3) + '%',
+      avgDiff >= 0.05 ? '✅ 閾値0.05で検知可能' : avgDiff >= 0.01 ? '⚠️ 閾値0.01〜0.05が必要' : '❌ 差分が微小（検知困難）',
+      '全ピクセルの平均変化量。背景が多いと希釈される'],
+    ['変化ピクセル率 >10/ch', pct10.toFixed(2) + '%',
+      pct10 >= 2 ? '✅' : pct10 >= 0.5 ? '⚠️' : '❌', '10/255以上変化したピクセルの割合（ノイズ含む）'],
+    ['変化ピクセル率 >30/ch', pct30.toFixed(2) + '%',
+      pct30 >= 1 ? '✅' : pct30 >= 0.2 ? '⚠️' : '❌', '30/255以上変化（意味のある変化の目安）'],
+    ['変化ピクセル率 >60/ch', pct60.toFixed(2) + '%',
+      pct60 >= 0.5 ? '✅' : '⚠️', '60/255以上変化（明確な色変化）'],
+    ['変化ピクセル率 >100/ch', pct100.toFixed(2) + '%',
+      pct100 >= 0.1 ? '✅' : '—', '100/255以上変化（大きな色変化）'],
+    ['差分値 p90（90%値）', p90val + '/255', '—', 'ピクセルの90%はこの値以下の変化量'],
+    ['差分値 p99（99%値）', p99val + '/255', '—', 'ピクセルの99%はこの値以下の変化量'],
+  ];
+
+  rows.forEach(([label, val, judge, desc]) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${label}</td><td>${val}</td><td>${judge}</td><td style="font-size:12px;color:#666">${desc}</td>`;
+    tbody.appendChild(tr);
+  });
+
+  // 推奨閾値
+  const rec = document.getElementById('recommendation');
+  let advice = '';
+  if (avgDiff >= 0.05) {
+    advice = `<span class="good">✅ 現行アルゴリズム（平均差分スコア）で検知可能です。</span><br>閾値 <strong>${(avgDiff * 0.5 * 100).toFixed(1)}%〜${(avgDiff * 0.8 * 100).toFixed(1)}%</strong> を推奨します。`;
+  } else if (pct30 >= 1.0) {
+    advice = `<span class="warn">⚠️ 平均差分スコアでは難しいですが、<strong>バイナリカウント方式</strong>（>30変化ピクセルが${pct30.toFixed(2)}%）なら検知できます。</span><br>
+    閾値として「変化ピクセル率 > ${(pct30 * 0.3).toFixed(2)}%」を推奨します。`;
+  } else if (pct10 >= 1.0) {
+    advice = `<span class="warn">⚠️ 変化が小さいです。バイナリカウント（>10変化）で ${pct10.toFixed(2)}% の変化があります。<br>
+    ノイズとの区別が難しく、閾値調整が繊細になります。</span>`;
+  } else {
+    advice = `<span class="bad">❌ 変化量が非常に小さく（全体の${pct10.toFixed(2)}%未満）、差分検知での自動認識は困難です。<br>
+    定期キャプチャ（5〜10秒間隔）+ 手動キャプチャボタンの組み合わせを推奨します。</span>`;
+  }
+  rec.innerHTML = advice;
+
+  // ヒートマップ描画
+  const dc = document.getElementById('diff-canvas');
+  const scale = Math.min(1, 800 / w);
+  dc.width = Math.round(w * scale);
+  dc.height = Math.round(h * scale);
+  const tmpCanvas = document.createElement('canvas');
+  tmpCanvas.width = w; tmpCanvas.height = h;
+  const tmpCtx = tmpCanvas.getContext('2d');
+  const imgDat = tmpCtx.createImageData(w, h);
+  imgDat.data.set(diffMap);
+  tmpCtx.putImageData(imgDat, 0, 0);
+  dc.getContext('2d').drawImage(tmpCanvas, 0, 0, dc.width, dc.height);
+}
+
+setupDrop('drop1', 'file1', 0);
+setupDrop('drop2', 'file2', 1);
+document.getElementById('analyze-btn').addEventListener('click', analyze);
+</script>
+</body>
+</html>
