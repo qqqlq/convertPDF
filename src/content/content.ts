@@ -11,7 +11,7 @@ let isCapturing = false;
 let threshold = DIFF_THRESHOLD_DEFAULT;
 let lastCaptureTime = 0;
 let intervalId: ReturnType<typeof setInterval> | null = null;
-let fallbackNotified = false;
+let fallbackFailCount = 0;
 
 const detector = new SlideDetector();
 
@@ -28,16 +28,25 @@ async function tick() {
 
   const pixels = drawFrame(video);
   if (!pixels) {
-    // Canvas への描画が SecurityError で失敗 → service worker に tabCapture を依頼
-    if (!fallbackNotified) {
-      fallbackNotified = true;
+    // drawFrame 失敗は稀なケース（HLS品質切替の瞬間など）のため
+    // 連続10回失敗して初めて tabCapture フォールバックへ切り替える
+    fallbackFailCount++;
+    if (fallbackFailCount >= 10) {
+      fallbackFailCount = 0;
+      stop();
       chrome.runtime.sendMessage({
         type: "USE_TAB_CAPTURE",
         threshold,
       } satisfies Message);
-      // tabCapture に切り替えたら content script 側のループは不要
-      stop();
     }
+    return;
+  }
+
+  fallbackFailCount = 0;
+
+  // 参照フレームが未設定（録画開始直後）なら最初のフレームを基準に設定
+  if (!detector.hasReference()) {
+    detector.updateReference(pixels);
     return;
   }
 
@@ -46,6 +55,8 @@ async function tick() {
 
   if (score >= threshold && now - lastCaptureTime > COOLDOWN_MS) {
     lastCaptureTime = now;
+    // キャプチャ成功時に参照フレームを更新（次の比較基準をリセット）
+    detector.updateReference(pixels);
     const pngData = await capturePNG(video);
     if (pngData) {
       chrome.runtime.sendMessage({
@@ -60,7 +71,7 @@ function start(msg: StartCaptureMessage) {
   if (isCapturing) return;
   threshold = msg.threshold;
   isCapturing = true;
-  fallbackNotified = false;
+  fallbackFailCount = 0;
   detector.reset();
   lastCaptureTime = 0;
   intervalId = setInterval(tick, CAPTURE_INTERVAL_MS);

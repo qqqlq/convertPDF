@@ -6,7 +6,7 @@ import {
 } from "../shared/constants.js";
 
 export class SlideDetector {
-  private prevData: Uint8ClampedArray | null = null;
+  private refFrame: Uint8ClampedArray | null = null;
 
   private getCropBounds() {
     const marginX = Math.floor((CANVAS_WIDTH * (1 - CENTER_CROP_RATIO)) / 2);
@@ -19,11 +19,13 @@ export class SlideDetector {
     };
   }
 
+  /**
+   * 現在フレームと「最後にキャプチャしたフレーム（参照フレーム）」との差分を返す。
+   * 250ms前との比較ではなく、前回保存時点からの累積変化を見るため
+   * 板書動画のようにゆっくり変化するコンテンツにも対応できる。
+   */
   compare(current: Uint8ClampedArray): number {
-    if (!this.prevData) {
-      this.prevData = current.slice();
-      return 0;
-    }
+    if (!this.refFrame) return 0;
 
     const { x0, y0, x1, y1 } = this.getCropBounds();
     let diff = 0;
@@ -33,18 +35,26 @@ export class SlideDetector {
       for (let x = x0; x < x1; x += SAMPLE_STEP) {
         const i = (y * CANVAS_WIDTH + x) * 4;
         diff +=
-          Math.abs(current[i] - this.prevData[i]) +
-          Math.abs(current[i + 1] - this.prevData[i + 1]) +
-          Math.abs(current[i + 2] - this.prevData[i + 2]);
+          Math.abs(current[i] - this.refFrame[i]) +
+          Math.abs(current[i + 1] - this.refFrame[i + 1]) +
+          Math.abs(current[i + 2] - this.refFrame[i + 2]);
         count++;
       }
     }
 
-    this.prevData = current.slice();
     return diff / (count * 3 * 255);
   }
 
+  hasReference(): boolean {
+    return this.refFrame !== null;
+  }
+
+  /** キャプチャ成功時に呼ぶ。次の比較基準をこのフレームに更新する。 */
+  updateReference(frame: Uint8ClampedArray) {
+    this.refFrame = frame.slice();
+  }
+
   reset() {
-    this.prevData = null;
+    this.refFrame = null;
   }
 }

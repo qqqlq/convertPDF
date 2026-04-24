@@ -1,7 +1,7 @@
 import { CANVAS_WIDTH, CANVAS_HEIGHT } from "../shared/constants.js";
 
 const canvas = new OffscreenCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
-const ctx = canvas.getContext("2d")!;
+const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
 
 export function drawFrame(video: HTMLVideoElement): Uint8ClampedArray | null {
   if (video.readyState < 2 || video.videoWidth === 0) return null;
