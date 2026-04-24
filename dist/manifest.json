@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "Slide PDF Converter",
+  "version": "0.1.0",
+  "description": "スライド動画のフレームを自動検知してPDFに変換します",
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "Slide PDF Converter"
+  },
+  "background": {
+    "service_worker": "service-worker-loader.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "js": [
+        "assets/content.ts-loader-C5S90tFt.js"
+      ],
+      "matches": [
+        "https://*.sharepoint.com/*",
+        "https://*.microsoftstream.com/*",
+        "https://web.microsoftstream.com/*",
+        "https://*.svc.ms/*"
+      ],
+      "all_frames": true
+    }
+  ],
+  "permissions": [
+    "tabCapture",
+    "downloads",
+    "offscreen",
+    "storage",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://*.sharepoint.com/*",
+    "https://*.microsoftstream.com/*",
+    "https://*.svc.ms/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "matches": [
+        "https://*.microsoftstream.com/*",
+        "https://*.sharepoint.com/*",
+        "https://*.svc.ms/*",
+        "https://web.microsoftstream.com/*"
+      ],
+      "resources": [
+        "assets/constants-BAXt5FwF.js",
+        "assets/content.ts-B0_2e9rg.js"
+      ],
+      "use_dynamic_url": false
+    }
+  ]
+}
