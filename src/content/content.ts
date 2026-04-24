@@ -1,19 +1,14 @@
 import {
-  CAPTURE_INTERVAL_MS,
-  DIFF_THRESHOLD_DEFAULT,
-  COOLDOWN_MS,
+  CAPTURE_INTERVAL_DEFAULT_MS,
+  FALLBACK_FAIL_THRESHOLD,
 } from "../shared/constants.js";
 import type { Message, StartCaptureMessage } from "../shared/types.js";
-import { SlideDetector } from "./detector.js";
-import { drawFrame, capturePNG } from "./capturer.js";
+import { capturePNG } from "./capturer.js";
 
 let isCapturing = false;
-let threshold = DIFF_THRESHOLD_DEFAULT;
-let lastCaptureTime = 0;
+let intervalMs = CAPTURE_INTERVAL_DEFAULT_MS;
 let intervalId: ReturnType<typeof setInterval> | null = null;
 let fallbackFailCount = 0;
-
-const detector = new SlideDetector();
 
 function findVideo(): HTMLVideoElement | null {
   const videos = Array.from(document.querySelectorAll("video"));
@@ -24,57 +19,37 @@ async function tick() {
   if (!isCapturing) return;
 
   const video = findVideo();
-  if (!video || video.paused) return;
+  if (!video || video.paused || video.readyState < 2) return;
 
-  const pixels = drawFrame(video);
-  if (!pixels) {
-    // drawFrame 失敗は稀なケース（HLS品質切替の瞬間など）のため
-    // 連続10回失敗して初めて tabCapture フォールバックへ切り替える
+  const pngData = await capturePNG(video);
+  if (!pngData) {
     fallbackFailCount++;
-    if (fallbackFailCount >= 10) {
+    if (fallbackFailCount >= FALLBACK_FAIL_THRESHOLD) {
       fallbackFailCount = 0;
       stop();
       chrome.runtime.sendMessage({
         type: "USE_TAB_CAPTURE",
-        threshold,
+        intervalMs,
       } satisfies Message);
     }
     return;
   }
 
   fallbackFailCount = 0;
-
-  // 参照フレームが未設定（録画開始直後）なら最初のフレームを基準に設定
-  if (!detector.hasReference()) {
-    detector.updateReference(pixels);
-    return;
-  }
-
-  const score = detector.compare(pixels);
-  const now = Date.now();
-
-  if (score >= threshold && now - lastCaptureTime > COOLDOWN_MS) {
-    lastCaptureTime = now;
-    // キャプチャ成功時に参照フレームを更新（次の比較基準をリセット）
-    detector.updateReference(pixels);
-    const pngData = await capturePNG(video);
-    if (pngData) {
-      chrome.runtime.sendMessage({
-        type: "FRAME_CAPTURED",
-        pngData,
-      } satisfies Message);
-    }
-  }
+  chrome.runtime.sendMessage({
+    type: "FRAME_CAPTURED",
+    pngData,
+  } satisfies Message);
 }
 
 function start(msg: StartCaptureMessage) {
   if (isCapturing) return;
-  threshold = msg.threshold;
+  intervalMs = msg.intervalMs;
   isCapturing = true;
   fallbackFailCount = 0;
-  detector.reset();
-  lastCaptureTime = 0;
-  intervalId = setInterval(tick, CAPTURE_INTERVAL_MS);
+  // 開始直後に1枚押さえてから間隔タイマーを開始
+  tick();
+  intervalId = setInterval(tick, intervalMs);
 }
 
 function stop() {
@@ -83,7 +58,6 @@ function stop() {
     clearInterval(intervalId);
     intervalId = null;
   }
-  detector.reset();
 }
 
 chrome.runtime.onMessage.addListener((msg: Message) => {
