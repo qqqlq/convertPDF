@@ -14,7 +14,7 @@ export interface BaseMessage {
 
 export interface StartCaptureMessage extends BaseMessage {
   type: "START_CAPTURE";
-  threshold: number;
+  intervalMs: number;
   /** popup が service worker に送る際にのみ付与する */
   tabId?: number;
 }
@@ -30,11 +30,14 @@ export interface FrameCapturedMessage extends BaseMessage {
 
 export interface GeneratePDFMessage extends BaseMessage {
   type: "GENERATE_PDF";
+  hammingThreshold?: number;
 }
 
 export interface PDFReadyMessage extends BaseMessage {
   type: "PDF_READY";
   dataUrl: string;
+  originalCount?: number;
+  keptCount?: number;
 }
 
 export interface StatusUpdateMessage extends BaseMessage {
@@ -45,14 +48,14 @@ export interface StatusUpdateMessage extends BaseMessage {
 
 export interface UseTabCaptureMessage extends BaseMessage {
   type: "USE_TAB_CAPTURE";
-  /** content script からは省略可（service worker が補完） */
   tabId?: number;
-  threshold: number;
+  intervalMs: number;
 }
 
 export interface OffscreenReadyMessage extends BaseMessage {
   type: "OFFSCREEN_READY";
   frames: number[][];
+  hammingThreshold: number;
 }
 
 export type Message =
