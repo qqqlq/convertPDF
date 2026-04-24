@@ -119,8 +119,8 @@ async function buildPDF(hammingThreshold: number): Promise<void> {
 
   const hashed: HashedFrame[] = [];
   for (const pngBytes of rawFrames) {
-    const hash = await computeDHash(pngBytes);
-    hashed.push({ pngBytes, hash });
+    const { hash, thumbPixels } = await computeDHash(pngBytes);
+    hashed.push({ pngBytes, hash, thumbPixels });
   }
 
   const kept = dedupFrames(hashed, hammingThreshold);
