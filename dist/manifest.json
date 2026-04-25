@@ -14,7 +14,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/content.ts-loader-CjmOOSOG.js"
+        "assets/content.ts-loader-DLA9MONl.js"
       ],
       "matches": [
         "https://*.sharepoint.com/*",
@@ -48,8 +48,8 @@
         "https://web.microsoftstream.com/*"
       ],
       "resources": [
-        "assets/constants-CmRpH0wS.js",
-        "assets/content.ts-IpKXfKVQ.js"
+        "assets/constants-DWil5rSD.js",
+        "assets/content.ts-CFW0-4bm.js"
       ],
       "use_dynamic_url": false
     }

@@ -20,5 +20,4 @@ export const THUMB_W = 128;
 export const THUMB_H = 72;
 export const SUPERSET_MIN_CONTENT_RATIO = 0.005;     // reference のコンテンツが 0.5% 未満なら判定しない
 export const SUPERSET_RETAIN_RATIO = 0.90;           // reference のコンテンツの 90% 以上が保持されていれば上位集合
-export const SUPERSET_CONTENT_LUM_DARK = 60;         // 暗背景（黒板）: 輝度 60 以上をコンテンツと見なす
-export const SUPERSET_CONTENT_LUM_LIGHT = 196;       // 明背景（白板）: 輝度 196 以下をコンテンツと見なす
+export const SUPERSET_CONTENT_DEVIATION = 40;        // 背景輝度（中央値）からこれ以上外れたピクセルをコンテンツと見なす

@@ -4,8 +4,7 @@ import {
   THUMB_H,
   SUPERSET_MIN_CONTENT_RATIO,
   SUPERSET_RETAIN_RATIO,
-  SUPERSET_CONTENT_LUM_DARK,
-  SUPERSET_CONTENT_LUM_LIGHT,
+  SUPERSET_CONTENT_DEVIATION,
 } from "../shared/constants.js";
 
 const GRID_W = DHASH_SIZE + 1; // 9
@@ -89,29 +88,29 @@ export function isSupersetOf(candidate: HashedFrame, reference: HashedFrame): bo
   const pB = candidate.thumbPixels;
   const total = THUMB_W * THUMB_H;
 
-  // reference の平均輝度で背景色を判定
-  let totalLum = 0;
-  for (let i = 0; i < total * 4; i += 4) {
-    totalLum += 0.299 * pA[i] + 0.587 * pA[i + 1] + 0.114 * pA[i + 2];
+  // reference の全ピクセル輝度を計算し、中央値を背景輝度として推定する
+  const lums = new Float32Array(total);
+  for (let i = 0; i < total; i++) {
+    const o = i * 4;
+    lums[i] = 0.299 * pA[o] + 0.587 * pA[o + 1] + 0.114 * pA[o + 2];
   }
-  const isDarkBackground = totalLum / total < 128;
-  const contentThreshold = isDarkBackground ? SUPERSET_CONTENT_LUM_DARK : SUPERSET_CONTENT_LUM_LIGHT;
+  lums.sort();
+  const bgLum = lums[Math.floor(total / 2)];
 
-  // reference のコンテンツピクセル数と、candidate でも保持されている数を数える
+  // 背景輝度から SUPERSET_CONTENT_DEVIATION 以上外れたピクセルをコンテンツと見なす
   let refContentCount = 0;
   let retainedCount = 0;
-  for (let i = 0; i < total * 4; i += 4) {
-    const lumA = 0.299 * pA[i] + 0.587 * pA[i + 1] + 0.114 * pA[i + 2];
-    const isContent = isDarkBackground ? lumA > contentThreshold : lumA < contentThreshold;
-    if (!isContent) continue;
+  for (let i = 0; i < total; i++) {
+    const o = i * 4;
+    const lumA = 0.299 * pA[o] + 0.587 * pA[o + 1] + 0.114 * pA[o + 2];
+    if (Math.abs(lumA - bgLum) <= SUPERSET_CONTENT_DEVIATION) continue;
 
     refContentCount++;
-    const lumB = 0.299 * pB[i] + 0.587 * pB[i + 1] + 0.114 * pB[i + 2];
-    const isRetained = isDarkBackground ? lumB > contentThreshold : lumB < contentThreshold;
-    if (isRetained) retainedCount++;
+    const lumB = 0.299 * pB[o] + 0.587 * pB[o + 1] + 0.114 * pB[o + 2];
+    if (Math.abs(lumB - bgLum) > SUPERSET_CONTENT_DEVIATION) retainedCount++;
   }
 
-  // reference にコンテンツがほぼない（空白スライド）は判定しない
+  // reference にコンテンツがほぼない（遷移フレーム等）は判定しない
   if (refContentCount < total * SUPERSET_MIN_CONTENT_RATIO) return false;
 
   return retainedCount / refContentCount >= SUPERSET_RETAIN_RATIO;
