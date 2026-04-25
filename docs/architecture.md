@@ -61,25 +61,40 @@ PNG → 9×8 にリサイズ → 輝度変換 → 横方向隣接ピクセル比
 
 2フレーム間のハミング距離 ≤ 8 → 同クラスタ（視覚的にほぼ同じ）
 
-### 2. スーパーセット判定
+### 2. スーパーセット判定（`isSupersetOf`）
+
+「新しいフレームが古いフレームに追記しただけのもの」かを判定する。
 
 ```
-変化ピクセルの方向性を分析:
-  暗くなる変化 = テキストが追加された（白背景スライド）
-  明るくなる変化 = チョークが追加された（黒板）
-
-dominant_direction / changed_pixels >= 0.85
-  かつ 0.5% <= 変化率 <= 30%
-→ 「コンテンツが追加されただけ」と判定 → 同クラスタ扱い
+1. reference（古いフレーム）の全ピクセル輝度を計算
+2. 輝度の中央値を「背景色」として推定
+   例: 緑の黒板 → 中央値 ≈ 88
+3. 背景輝度から SUPERSET_CONTENT_DEVIATION(40) 以上外れたピクセルをコンテンツとして抽出
+   例: 白チョーク(輝度200) → |200-88|=112 > 40 → コンテンツ
+       緑背景(輝度88)      → |88-88|=0 < 40  → 背景（除外）
+4. そのコンテンツピクセルが candidate（新しいフレーム）でも保持されているか確認
+5. 保持率 >= SUPERSET_RETAIN_RATIO(0.90) → 上位集合（同クラスタ）
 ```
 
-各クラスタの最後のフレーム（最も多くのコンテンツが写った状態）のみ保持。
+背景色を中央値で動的に推定するため、緑黒板・白板・スライドツールなど
+背景色の種類を問わず機能する。
 
-**現状の問題点**: スーパーセット判定の精度が不十分。チューニング要。
-考えられる原因:
-- `SUPERSET_DIRECTION_RATIO = 0.85` が厳しすぎる可能性
-- `THUMB_W × THUMB_H = 128×72` のサムネイル解像度が低すぎる可能性
-- 変化量の上限 `SUPERSET_MAX_CHANGE_RATIO = 0.30` が不適切な可能性
+### 3. クラスタリングと最終フレーム選択
+
+```typescript
+// dedupFrames のロジック
+for (各フレーム) {
+  if (dHash距離 <= threshold || isSupersetOf(frame, clusterLast)) {
+    clusterLast = frame;  // 同クラスタ。より新しい（コンテンツが多い）方に更新
+  } else {
+    kept.push(clusterLast);  // クラスタ確定。最後のフレームを採用
+    clusterLast = frame;     // 新クラスタ開始
+  }
+}
+kept.push(clusterLast);
+```
+
+各クラスタの「最後のフレーム」= 最もコンテンツが多い状態のフレームを保持。
 
 ## サービスワーカー生存管理
 
@@ -115,7 +130,8 @@ tools/
 └── analyze-diff.html          # 画像差分分析ツール（ブラウザで開いて使う）
 
 docs/
-└── architecture.md            # 本ファイル
+├── architecture.md            # 本ファイル（技術仕様）
+└── overview.md                # ユーザー向け解説・開発経緯
 ```
 
 ## 主要パラメータ一覧
@@ -128,7 +144,7 @@ docs/
 | `BINARY_CHANGE_THRESHOLD` | 0.015 | 差分検知の発火閾値（変化ピクセル率） |
 | `DIFF_COOLDOWN_MS` | 2,000 | 差分検知のクールダウン（ms） |
 | `HAMMING_THRESHOLD_DEFAULT` | 8 | dHash の重複判定距離 |
-| `SUPERSET_DIRECTION_RATIO` | 0.85 | スーパーセット判定の方向性閾値 |
-| `SUPERSET_MIN_CHANGE_RATIO` | 0.005 | スーパーセット判定の最小変化率 |
-| `SUPERSET_MAX_CHANGE_RATIO` | 0.30 | スーパーセット判定の最大変化率（超えたら別スライド） |
+| `SUPERSET_MIN_CONTENT_RATIO` | 0.005 | referenceのコンテンツが0.5%未満なら判定しない（遷移フレーム除外） |
+| `SUPERSET_RETAIN_RATIO` | 0.90 | コンテンツ保持率がこれ以上なら上位集合と判定 |
+| `SUPERSET_CONTENT_DEVIATION` | 40 | 背景輝度からの偏差がこれ以上のピクセルをコンテンツとみなす |
 | `THUMB_W / THUMB_H` | 128 / 72 | スーパーセット判定用サムネイルサイズ |
