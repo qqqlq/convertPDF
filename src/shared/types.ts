@@ -20,6 +20,8 @@ export interface StartCaptureMessage extends BaseMessage {
   intervalMs: number;
   /** popup が service worker に送る際にのみ付与する */
   tabId?: number;
+  /** false = 再開（既存フレームを引き継ぐ）、省略または true = 新規（フレームをクリア） */
+  clearFrames?: boolean;
 }
 
 export interface StopCaptureMessage extends BaseMessage {

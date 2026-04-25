@@ -67,17 +67,18 @@ function broadcastStatus() {
   chrome.runtime.sendMessage(status).catch(() => {});
 }
 
-async function startCapture(tabId: number, intervalMs: number) {
+async function startCapture(tabId: number, intervalMs: number, clearFrames = true) {
   if (isCapturing) return;
   isCapturing = true;
   activeTabId = tabId;
   captureIntervalMs = intervalMs;
-  frameCount = 0;
   startKeepalive();
 
-  // offscreen の IndexedDB をクリア
   await ensureOffscreen();
-  chrome.runtime.sendMessage({ type: "CLEAR_FRAMES" } satisfies Message).catch(() => {});
+  if (clearFrames) {
+    frameCount = 0;
+    chrome.runtime.sendMessage({ type: "CLEAR_FRAMES" } satisfies Message).catch(() => {});
+  }
 
   await saveState();
   broadcastStatus();
@@ -119,7 +120,7 @@ chrome.runtime.onMessage.addListener((msg: Message) => {
     case "START_CAPTURE": {
       const m = msg as StartCaptureMessage;
       if (m.tabId == null) return;
-      startCapture(m.tabId, m.intervalMs);
+      startCapture(m.tabId, m.intervalMs, m.clearFrames !== false);
       break;
     }
     case "STOP_CAPTURE":

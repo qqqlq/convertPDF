@@ -45,7 +45,14 @@ h1 {
   margin-bottom: 10px;
 }
 
-.buttons button:first-child {
+/* 1ボタンのみの行は全幅 */
+.buttons button:only-child,
+#buttons-capturing button:first-child {
+  grid-column: 1 / -1;
+}
+
+/* 停止中: 再開・新規を横並び、PDF生成を全幅 */
+#buttons-stopped button:last-child {
   grid-column: 1 / -1;
 }
 

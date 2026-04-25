@@ -1,25 +1,35 @@
 import type { Message, StatusUpdateMessage, PDFReadyMessage } from "../shared/types.js";
 
-const btnToggle = document.getElementById("btn-toggle") as HTMLButtonElement;
-const btnManual = document.getElementById("btn-manual") as HTMLButtonElement;
-const btnPdf = document.getElementById("btn-pdf") as HTMLButtonElement;
-const statusEl = document.getElementById("status")!;
-const countEl = document.getElementById("count")!;
+const btnStart    = document.getElementById("btn-start")    as HTMLButtonElement;
+const btnStop     = document.getElementById("btn-stop")     as HTMLButtonElement;
+const btnResume   = document.getElementById("btn-resume")   as HTMLButtonElement;
+const btnNew      = document.getElementById("btn-new")      as HTMLButtonElement;
+const btnManual   = document.getElementById("btn-manual")   as HTMLButtonElement;
+const btnPdf      = document.getElementById("btn-pdf")      as HTMLButtonElement;
+const statusEl    = document.getElementById("status")!;
+const countEl     = document.getElementById("count")!;
 const intervalInput = document.getElementById("interval") as HTMLInputElement;
-const intervalVal = document.getElementById("interval-val")!;
-const hammingInput = document.getElementById("hamming") as HTMLInputElement;
-const hammingVal = document.getElementById("hamming-val")!;
+const intervalVal   = document.getElementById("interval-val")!;
+const hammingInput  = document.getElementById("hamming")  as HTMLInputElement;
+const hammingVal    = document.getElementById("hamming-val")!;
 
-let isCapturing = false;
+const buttonsInitial   = document.getElementById("buttons-initial")!;
+const buttonsCapturing = document.getElementById("buttons-capturing")!;
+const buttonsStopped   = document.getElementById("buttons-stopped")!;
+
+type UIState = "initial" | "capturing" | "stopped";
 
 function updateUI(capturing: boolean, count: number) {
-  isCapturing = capturing;
   countEl.textContent = String(count);
-  btnToggle.textContent = capturing ? "録画停止" : "録画開始";
+
+  const state: UIState = capturing ? "capturing" : count > 0 ? "stopped" : "initial";
+
+  buttonsInitial.style.display   = state === "initial"   ? "" : "none";
+  buttonsCapturing.style.display = state === "capturing" ? "" : "none";
+  buttonsStopped.style.display   = state === "stopped"   ? "" : "none";
+
   statusEl.textContent = capturing ? "録画中..." : "待機中";
   statusEl.classList.toggle("capturing", capturing);
-  btnManual.disabled = !capturing;
-  btnPdf.disabled = capturing || count === 0;
 }
 
 intervalInput.addEventListener("input", () => {
@@ -30,22 +40,50 @@ hammingInput.addEventListener("input", () => {
   hammingVal.textContent = hammingInput.value;
 });
 
-btnToggle.addEventListener("click", async () => {
+async function getActiveTabId(): Promise<number | null> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) return;
+  return tab?.id ?? null;
+}
 
-  if (!isCapturing) {
-    const intervalMs = parseInt(intervalInput.value) * 1000;
-    chrome.runtime.sendMessage({
-      type: "START_CAPTURE",
-      intervalMs,
-      tabId: tab.id,
-    } satisfies Message);
-    updateUI(true, parseInt(countEl.textContent ?? "0"));
-  } else {
-    chrome.runtime.sendMessage({ type: "STOP_CAPTURE" } satisfies Message);
-    updateUI(false, parseInt(countEl.textContent ?? "0"));
-  }
+btnStart.addEventListener("click", async () => {
+  const tabId = await getActiveTabId();
+  if (tabId == null) return;
+  chrome.runtime.sendMessage({
+    type: "START_CAPTURE",
+    intervalMs: parseInt(intervalInput.value) * 1000,
+    tabId,
+    clearFrames: true,
+  } satisfies Message);
+  updateUI(true, 0);
+});
+
+btnStop.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "STOP_CAPTURE" } satisfies Message);
+  updateUI(false, parseInt(countEl.textContent ?? "0"));
+});
+
+btnResume.addEventListener("click", async () => {
+  const tabId = await getActiveTabId();
+  if (tabId == null) return;
+  chrome.runtime.sendMessage({
+    type: "START_CAPTURE",
+    intervalMs: parseInt(intervalInput.value) * 1000,
+    tabId,
+    clearFrames: false,
+  } satisfies Message);
+  updateUI(true, parseInt(countEl.textContent ?? "0"));
+});
+
+btnNew.addEventListener("click", async () => {
+  const tabId = await getActiveTabId();
+  if (tabId == null) return;
+  chrome.runtime.sendMessage({
+    type: "START_CAPTURE",
+    intervalMs: parseInt(intervalInput.value) * 1000,
+    tabId,
+    clearFrames: true,
+  } satisfies Message);
+  updateUI(true, 0);
 });
 
 btnManual.addEventListener("click", () => {

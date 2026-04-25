@@ -16,10 +16,17 @@
     <input type="range" id="interval" min="5" max="120" step="5" value="10" />
   </label>
 
-  <div class="buttons">
-    <button id="btn-toggle">録画開始</button>
-    <button id="btn-manual" disabled>今すぐキャプチャ</button>
-    <button id="btn-pdf" disabled>PDF生成</button>
+  <div class="buttons" id="buttons-initial">
+    <button id="btn-start">録画開始</button>
+  </div>
+  <div class="buttons" id="buttons-capturing" style="display:none">
+    <button id="btn-stop">録画停止</button>
+    <button id="btn-manual">今すぐキャプチャ</button>
+  </div>
+  <div class="buttons" id="buttons-stopped" style="display:none">
+    <button id="btn-resume">録画再開</button>
+    <button id="btn-new">新規録画</button>
+    <button id="btn-pdf">PDF生成</button>
   </div>
 
   <details class="advanced">
