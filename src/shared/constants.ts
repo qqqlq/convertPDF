@@ -18,6 +18,7 @@ export const DHASH_SIZE = 8;
 export const HAMMING_THRESHOLD_DEFAULT = 8;
 export const THUMB_W = 128;
 export const THUMB_H = 72;
-export const SUPERSET_DIRECTION_RATIO = 0.85;        // 85% 同方向変化 = 上位集合
-export const SUPERSET_MIN_CHANGE_RATIO = 0.005;      // 変化ピクセルが 0.5% 未満は無視
-export const SUPERSET_MAX_CHANGE_RATIO = 0.30;       // 30% 超の変化は別スライドと判断
+export const SUPERSET_MIN_CONTENT_RATIO = 0.005;     // reference のコンテンツが 0.5% 未満なら判定しない
+export const SUPERSET_RETAIN_RATIO = 0.90;           // reference のコンテンツの 90% 以上が保持されていれば上位集合
+export const SUPERSET_CONTENT_LUM_DARK = 60;         // 暗背景（黒板）: 輝度 60 以上をコンテンツと見なす
+export const SUPERSET_CONTENT_LUM_LIGHT = 196;       // 明背景（白板）: 輝度 196 以下をコンテンツと見なす

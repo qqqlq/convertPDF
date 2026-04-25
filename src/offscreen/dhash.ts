@@ -2,9 +2,10 @@ import {
   DHASH_SIZE,
   THUMB_W,
   THUMB_H,
-  SUPERSET_DIRECTION_RATIO,
-  SUPERSET_MIN_CHANGE_RATIO,
-  SUPERSET_MAX_CHANGE_RATIO,
+  SUPERSET_MIN_CONTENT_RATIO,
+  SUPERSET_RETAIN_RATIO,
+  SUPERSET_CONTENT_LUM_DARK,
+  SUPERSET_CONTENT_LUM_LIGHT,
 } from "../shared/constants.js";
 
 const GRID_W = DHASH_SIZE + 1; // 9
@@ -76,38 +77,44 @@ export function hamming(a: Uint8Array, b: Uint8Array): number {
  * candidate が reference の「上位集合」かどうかを判定する。
  *
  * 「candidate = reference にコンテンツが追加されたもの」のとき true を返す。
- * 判定基準：変化したピクセルの 85% 以上が同じ方向（暗くなる or 明るくなる）に
- * 変化していれば、コンテンツが一方的に追加されたと見なす。
+ * 判定基準：reference のコンテンツピクセルが candidate でも 90% 以上保持されていること。
  *
- * - 白背景スライドでテキスト追加 → 暗くなる変化が支配的
- * - 黒板でチョーク追加           → 明るくなる変化が支配的
+ * - 暗背景（黒板）: 明るいピクセル（チョーク）をコンテンツと見なす
+ * - 明背景（白板）: 暗いピクセル（テキスト）をコンテンツと見なす
+ *
+ * 変化量の上限を設けないため、ページ下半分まるごと追記されても誤弾きしない。
  */
 export function isSupersetOf(candidate: HashedFrame, reference: HashedFrame): boolean {
   const pA = reference.thumbPixels;
   const pB = candidate.thumbPixels;
   const total = THUMB_W * THUMB_H;
 
-  let changed = 0;
-  let darker = 0;
-  let lighter = 0;
+  // reference の平均輝度で背景色を判定
+  let totalLum = 0;
+  for (let i = 0; i < total * 4; i += 4) {
+    totalLum += 0.299 * pA[i] + 0.587 * pA[i + 1] + 0.114 * pA[i + 2];
+  }
+  const isDarkBackground = totalLum / total < 128;
+  const contentThreshold = isDarkBackground ? SUPERSET_CONTENT_LUM_DARK : SUPERSET_CONTENT_LUM_LIGHT;
 
+  // reference のコンテンツピクセル数と、candidate でも保持されている数を数える
+  let refContentCount = 0;
+  let retainedCount = 0;
   for (let i = 0; i < total * 4; i += 4) {
     const lumA = 0.299 * pA[i] + 0.587 * pA[i + 1] + 0.114 * pA[i + 2];
+    const isContent = isDarkBackground ? lumA > contentThreshold : lumA < contentThreshold;
+    if (!isContent) continue;
+
+    refContentCount++;
     const lumB = 0.299 * pB[i] + 0.587 * pB[i + 1] + 0.114 * pB[i + 2];
-    const diff = Math.abs(lumA - lumB);
-    if (diff > 10) {
-      changed++;
-      if (lumB < lumA) darker++;
-      else lighter++;
-    }
+    const isRetained = isDarkBackground ? lumB > contentThreshold : lumB < contentThreshold;
+    if (isRetained) retainedCount++;
   }
 
-  // 変化が少なすぎる（dHash が処理すべきケース）or 多すぎる（別スライド）は false
-  if (changed < total * SUPERSET_MIN_CHANGE_RATIO) return false;
-  if (changed > total * SUPERSET_MAX_CHANGE_RATIO) return false;
+  // reference にコンテンツがほぼない（空白スライド）は判定しない
+  if (refContentCount < total * SUPERSET_MIN_CONTENT_RATIO) return false;
 
-  const dominant = Math.max(darker, lighter);
-  return dominant / changed >= SUPERSET_DIRECTION_RATIO;
+  return retainedCount / refContentCount >= SUPERSET_RETAIN_RATIO;
 }
 
 /**
